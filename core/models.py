@@ -83,14 +83,12 @@ class Evidence:
 
     def as_dict(self) -> dict[str, Any]:
         """Plain-data form. Lives in core so both adapters serialize identically."""
-        payload: dict[str, Any] = {
+        return {
             "tier": self.tier.value,
             "summary": self.summary,
             "detail": self.detail,
+            "command": self.command,
         }
-        if self.command is not None:
-            payload["command"] = self.command
-        return payload
 
 
 @dataclass(frozen=True)
