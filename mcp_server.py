@@ -151,7 +151,7 @@ def build_server() -> Any:
     return server
 
 
-def main() -> int:
+async def main() -> int:
     """Run the MCP server over stdio.
 
     Returns:
@@ -160,13 +160,16 @@ def main() -> int:
     import sys
 
     try:
-        build_server()
+        server = build_server()
     except RuntimeError as exc:
         print(f"melody-mcp: {exc}", file=sys.stderr)
         return 2
-    # FastMCP.run() blocks on stdio and does not return a code.
+    # The stdio runner blocks until the client closes the connection.
+    await server.run_stdio_async()
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    import asyncio
+
+    raise SystemExit(asyncio.run(main()))
