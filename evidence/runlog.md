@@ -850,3 +850,81 @@ and stayed at 15 across the deletion.
 **Not a rollback.** This is a deliberate scope cut, not a fix to
 the W2 implementation. The implementation in `9144680` is correct;
 it just should not have been merged with no consumer.
+
+---
+
+## GD001 bug — diff_ref convention mismatch (tests green, integration broken)
+
+**Date:** 2026-09-19
+**Requested:** Merge `feature/goal-driven-execution` into `main`, then verify
+both checks actually fire through the CLI — not just that the test count went up.
+
+### The bug
+
+`check_test_verification` (GD001) treated `diff_ref` as the **new/fix commit**,
+while the pipeline (`build_context`) and SC001 both treat it as the **base/old
+commit**. This is exactly the class of gap GD001 exists to catch: unit tests
+passed, but the check silently produced zero findings (or crashed) when invoked
+the way the CLI actually invokes it.
+
+**Root cause, in code.** `build_context` runs
+`git diff --no-color <diff_ref>` — so `diff_ref` is the *old* side, and the
+pre-diff code lives **at** `diff_ref`. SC001 honors this (`git show
+<diff_ref>:<path>` = the pre-diff file). But GD001 did two wrong things:
+
+- `_resolve_parent` computed `<diff_ref>~1`, resolving the wrong commit.
+- `_show_file_at` read the test file *at* `diff_ref` — the old side, where a
+  freshly-added test does not exist — returning `None` and causing a silent
+  `continue` (zero findings), or, on a root diff, a `ReviewError`:
+  `cannot resolve parent commit 'HEAD~1'~1 … is this the root commit`.
+
+### The reproductions (before fix)
+
+1. 2-commit repo (`melody review --diff HEAD~1` on root + fix) → crashed with
+   the `ReviewError` above.
+2. 3-commit repo (root → middle → fix with a trivial test that passes against
+   the buggy code) → exit 0, `findings: []`, when it should have emitted a
+   PROVEN `GD001_test_does_not_reproduce_bug`.
+
+### The fix
+
+In `core/test_verification_check.py`:
+
+- `_resolve_parent` → `_resolve_base`: resolves `diff_ref` itself
+  (`<diff_ref>^{commit}`) as the base/pre-diff commit, matching SC001.
+- `_show_file_at` → `_read_new_file`: reads the new test from the **working
+  tree** (`repo_path / rel_path`), since the diff's new side is the working
+  tree, not a git revision.
+- Renamed the local `parent_sha` → `base_sha`; the misleading "parent" name
+  was the trap that hid the convention error.
+
+In `tests/test_test_verification.py`:
+
+- `_build_context` previously set `diff_ref = fix_sha` (the new commit) — the
+  wrong convention — which is why the tests were green while the bug existed.
+  Now it mirrors the pipeline: `base = f"{fix_sha}~1"`, diff via
+  `git diff --no-color <base>`, and `diff_ref = base`.
+
+### Verification (after fix)
+
+- `.venv/bin/pytest -q` → **15 passed**.
+- Repro 1 (2-commit) → GD001 fires: 1 PROVEN finding, `test_add_is_callable`
+  passes against pre-diff code; evidence carries the pytest command and `1
+  passed in 0.00s`.
+- Repro 2 (3-commit) → same GD001 PROVEN finding (exit 1).
+- `melody review --diff d0c087b~1 --format json` → exit 1, **6 findings**:
+  - SC001_orphaned_symbol × 4 (surgical_changes)
+  - GD001_test_does_not_reproduce_bug × 2 (goal_driven_execution)
+
+### The lesson, stated plainly
+
+This is a textbook instance of what GD001 itself is built to catch: a change
+whose unit tests pass but whose integration is broken, so the passing tests
+mask a real defect. The tests called the check directly with a
+`diff_ref = fix_sha` convention that the CLI does not use; once invoked the
+way the CLI invokes it, the check was a no-op or a crash. The tests have now
+been brought onto the pipeline's real convention so this regression cannot
+hide behind green tests again.
+
+**Note on scope:** Task 4 / Simplicity First work was deliberately left
+untouched in this pass, per instruction — separate concern, checked next.

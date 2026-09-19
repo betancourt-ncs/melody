@@ -110,35 +110,42 @@ def _git_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         raise ReviewError("git is not installed or not on PATH") from exc
 
 
-def _resolve_parent(repo_path: Path, diff_ref: str) -> str:
-    """Return the full sha of ``<diff_ref>~1``.
+def _resolve_base(repo_path: Path, diff_ref: str) -> str:
+    """Return the full sha of ``diff_ref``, the diff's base (pre-diff) commit.
+
+    ``diff_ref`` names the old/buggy state: the pipeline diffs ``diff_ref``
+    against the working tree (``git diff --no-color <diff_ref>``), so the
+    pre-diff code lives at ``diff_ref`` itself, not its parent. This helper
+    resolves that name to a commit sha.
 
     Raises:
-        ReviewError: If the parent cannot be resolved (e.g. diff_ref is the
-            root commit, or the ref is invalid).
+        ReviewError: If the ref cannot be resolved, or git is unavailable.
     """
     result = _git_run(
-        ["git", "rev-parse", "--verify", "--quiet", "--end-of-options", f"{diff_ref}~1^{{commit}}"],
+        ["git", "rev-parse", "--verify", "--quiet", "--end-of-options", f"{diff_ref}^{{commit}}"],
         repo_path,
     )
     sha = result.stdout.strip()
     if result.returncode != 0 or not sha:
         raise ReviewError(
-            f"cannot resolve parent commit {diff_ref!r}~1 in {repo_path} "
-            "(is this the root commit, or is the ref invalid?)"
+            f"cannot resolve diff ref {diff_ref!r} in {repo_path} "
+            "(is the ref invalid?)"
         )
     return sha
 
 
-def _show_file_at(repo_path: Path, ref: str, rel_path: str) -> str | None:
-    """Return the file content at ``<ref>:<rel_path>``.
+def _read_new_file(repo_path: Path, rel_path: str) -> str | None:
+    """Return the new-side content of ``rel_path`` from the working tree.
 
-    Returns ``None`` if the file did not exist at that revision.
+    The diff's new side is the working tree (``git diff <diff_ref>`` diffs
+    against it), so the new test lives in the file on disk, not at any git
+    revision. Returns ``None`` if the file is absent.
     """
-    result = _git_run(["git", "show", f"{ref}:{rel_path}"], repo_path)
-    if result.returncode != 0:
+    target = repo_path / rel_path
+    try:
+        return target.read_text()
+    except FileNotFoundError:
         return None
-    return result.stdout
 
 
 def _worktree_add(source_repo: Path, worktree: Path, commit: str) -> None:
@@ -247,8 +254,8 @@ def check_test_verification(context: ReviewContext) -> Sequence[Finding]:
     AND has hunks in at least one non-test file. For each new or modified
     test file in such a diff, the check:
 
-    1. Resolves the diff's parent commit (``<diff_ref>~1``).
-    2. Creates a detached worktree at the parent state.
+    1. Resolves the diff's base commit (``diff_ref`` -- the pre-diff code).
+    2. Creates a detached worktree at that base state.
     3. Grafts the diff's new version of the test file into the worktree.
     4. Runs ``pytest -q --no-header`` against that test file in the worktree.
 
@@ -268,19 +275,17 @@ def check_test_verification(context: ReviewContext) -> Sequence[Finding]:
     if not test_paths or not code_paths:
         return []
 
-    parent_sha = _resolve_parent(context.repo_path, context.diff_ref)
+    base_sha = _resolve_base(context.repo_path, context.diff_ref)
 
     worktree = Path(tempfile.mkdtemp(prefix="melody-testverify-"))
     findings: list[Finding] = []
     try:
-        _worktree_add(context.repo_path, worktree, parent_sha)
+        _worktree_add(context.repo_path, worktree, base_sha)
 
         for test_path in test_paths:
-            new_content = _show_file_at(
-                context.repo_path, context.diff_ref, test_path
-            )
+            new_content = _read_new_file(context.repo_path, test_path)
             if new_content is None:
-                # The new version of the test file is not at the diff_ref.
+                # The new version of the test file is not in the working tree.
                 # Defensive: should not happen for added/modified files.
                 continue
 
@@ -304,7 +309,7 @@ def check_test_verification(context: ReviewContext) -> Sequence[Finding]:
                             Evidence(
                                 tier=EvidenceTier.PROVEN,
                                 summary=(
-                                    f"pytest exited 0 against {parent_sha[:10]}; "
+                                    f"pytest exited 0 against {base_sha[:10]}; "
                                     "the test cannot fail without the fix"
                                 ),
                                 detail=result.combined_output.strip() or "(no output)",
@@ -330,7 +335,7 @@ def check_test_verification(context: ReviewContext) -> Sequence[Finding]:
                                 summary=(
                                     f"pytest exited {result.returncode} and "
                                     "reported a collection/import error against "
-                                    f"{parent_sha[:10]}"
+                                    f"{base_sha[:10]}"
                                 ),
                                 detail=result.combined_output.strip() or "(no output)",
                                 command=result.command,

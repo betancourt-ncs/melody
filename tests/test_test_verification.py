@@ -57,15 +57,24 @@ def _commit(repo: Path, files: dict[str, str], message: str) -> str:
 
 
 def _build_context(repo: Path, fix_sha: str) -> ReviewContext:
-    """Build a ReviewContext the check can consume for the fix commit."""
+    """Build a ReviewContext the way the pipeline does.
+
+    The pipeline diffs ``diff_ref`` (the base/old commit) against the working
+    tree, and the check reads the new test file from disk. Here the working
+    tree sits at *fix_sha*, so the base is ``fix_sha~1`` and ``diff_ref`` is
+    that base -- exactly how ``melody review --diff <base>`` invokes the check
+    in production. ``_commit`` leaves the working tree clean at ``fix_sha``,
+    so ``git diff --no-color <base>`` yields the fix commit's diff.
+    """
+    base = f"{fix_sha}~1"
     diff_text = subprocess.check_output(
-        ["git", "diff", "--no-color", f"{fix_sha}~1", fix_sha], cwd=repo, text=True
+        ["git", "diff", "--no-color", base], cwd=repo, text=True
     )
     parsed = parse_unified_diff(diff_text)
     ls = subprocess.check_output(["git", "ls-files"], cwd=repo, text=True).splitlines()
     return ReviewContext(
         repo_path=repo,
-        diff_ref=fix_sha,
+        diff_ref=base,
         diff=parsed,
         repo_root_files=tuple(repo / p for p in ls if p),
     )
