@@ -823,3 +823,30 @@ merge is the user's call after both tracks land.
   fixture directory tree and could be reused by future checks that
   need the same base/good-fix/bad-fix shape.
 
+
+### Post-task cleanup (2026-09-19)
+
+After the W1/W2 reports landed, the user reviewed the duplication
+flag and decided the helper should not ship. Two reasons:
+
+- The check we're about to register is "tests must actually
+  exercise the code." Shipping an unused fixture directory in
+  the same tree contradicts that posture on its face.
+- The helper was 128 lines of dead-on-arrival code with a
+  `__pycache__` already generated under it on the worktree.
+
+**Removed:** the entire `tests/fixtures/` tree — `tests/fixtures/__init__.py`,
+`tests/fixtures/test_verification/__init__.py`, and
+`tests/fixtures/test_verification/.gitkeep`. Verified zero
+references anywhere in the tracked tree before deletion
+(`grep "tests.fixtures|make_sample_repo"` returned nothing).
+
+**Verification:** `.venv/bin/pytest -q` after deletion still
+reports 15 passed (unchanged from before the cleanup) — W1's
+`tests/test_test_verification.py` is self-contained and does not
+import the helper. Test count went from 11 (pre-W1) to 15 (post-W1)
+and stayed at 15 across the deletion.
+
+**Not a rollback.** This is a deliberate scope cut, not a fix to
+the W2 implementation. The implementation in `9144680` is correct;
+it just should not have been merged with no consumer.
