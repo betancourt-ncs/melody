@@ -552,3 +552,274 @@ required user intervention.
   removed definition). A rename with no surviving references to the old name
   is correctly a non-finding; a rename that leaves references to the old name
   is correctly flagged. But the message says "removed" in both cases.
+
+---
+
+## Task 3 — Goal-Driven Execution check + on-demand fixture
+
+**Date:** 2026-09-19
+**Requested:** Add a check (GD001) that flags "fix" commits whose new test
+would still pass against the buggy parent code. Detection only, no fix
+proposals. Evidence must be PROVEN: an actual pytest invocation against
+the reconstructed pre-diff state, with the command and output recorded.
+**Done-when:** at least one PROVEN finding against the pathology
+(trivial test passes against the bug) AND a clean zero-finding case
+(the new test would actually fail against the bug), both covered by
+tests.
+
+### What was attempted, in order
+
+The track was split between two workers; this entry covers both halves.
+W1 owned `core/test_verification_check.py` and `tests/test_test_verification.py`.
+W2 (this writer) owned the fixture under `tests/fixtures/test_verification/`
+and this runlog entry. Per the boundary rules, neither worker touched the
+other's files.
+
+**Phase 0 — Plan and fixture design (NOT MEASURED, ~10 min wall-clock).**
+
+The brief asked for a "checked-in fixture repo with three commits." The
+first sketch in the brief was a directory `tests/fixtures/test_verification/`
+containing a real `.git/` and committed files. I rejected this approach
+after writing out the consequences:
+
+- A `.git/` directory inside a tracked directory IS trackable in git as
+  plain files (it is not a submodule unless explicitly made one), but
+  `git status` would then show thousands of `.git/objects/...` entries
+  polluting the working tree state for every commit going forward.
+- Putting `tests/fixtures/test_verification/` into the outer repo's
+  `.gitignore` would mean the fixture isn't actually checked in, which
+  defeats the purpose.
+- Generating the fixture on demand in `conftest.py` (or as a helper
+  module) avoids the entire problem: nothing is committed except a
+  one-line placeholder, and each test run gets a fresh, deterministic
+  three-commit repo.
+
+The on-demand approach also matches W1's preferred pattern (the existing
+`tests/test_smoke.py` and `tests/test_orphan.py` build throwaway repos
+in pytest fixtures, not from checked-in state), so the convention
+stays consistent.
+
+I surfaced this correction in the per-worker task brief rather than
+silently switching — see "Points where the human had to intervene" below.
+
+**Phase 1 — Fixture helper (W2, duration NOT MEASURED in elapsed terms).**
+
+Files written and committed as `e967930`:
+
+- `tests/__init__.py` (0 lines) — empty, so `tests/` is a package.
+  Pre-existing tests continued to pass after this addition (11/11).
+- `tests/fixtures/__init__.py` (0 lines) — empty marker.
+- `tests/fixtures/test_verification/__init__.py` (128 lines) —
+  exports `make_sample_repo(parent: Path) -> Path`. The helper runs
+  `git init`, configures `user.email=test@example.com` /
+  `user.name=Test` (matching the identity used by `tests/test_smoke.py`
+  and `tests/test_orphan.py`), then creates three commits:
+   - `HEAD~2` base: `mymod.py` = `def add(a, b): return a * b`,
+     `test_mymod.py` = `test_smoke` asserting `add(0, 0) == 0`
+     (passes against both the buggy and the correct implementation;
+     keeps the test file non-empty without locking in the bug).
+   - `HEAD~1` good fix: `mymod.py` = `return a + b`,
+     `test_mymod.py` adds `test_add_correct` asserting
+     `add(2, 3) == 5` — this test fails against `HEAD~2` (where
+     `2 * 3 == 6`), so it genuinely reproduces the bug.
+   - `HEAD` bad fix: `mymod.py` reverted to `a * b`,
+     `test_mymod.py` adds `test_trivial_passes` asserting
+     `callable(add)` — passes regardless of the bug (pathology).
+- `tests/fixtures/test_verification/.gitkeep` (0 lines) — placeholder
+  so the directory tracks even if the helper module is moved.
+
+The `__init__.py` also writes a one-line `conftest.py` and `[pytest]`
+block `pytest.ini` into the fixture repo (untracked, post-commit) to
+pin pytest's rootdir. Without one of these, pytest's rootdir
+auto-detection walks up the filesystem looking for a config file and
+can find an unrelated parent — which silently drops half the tests
+when the test file is given as a positional argument.
+
+**Phase 2 — Fixture smoke verification (W2, ~3 min).**
+
+Verified the helper end-to-end by calling `make_sample_repo(tmp_path)`
+in a Python REPL, capturing absolute SHAs first, then resetting to
+each and running `pytest test_mymod.py -v --tb=short` with a
+`__pycache__` wipe between scenarios:
+
+```
+=== BASE (HEAD~2, 9b684af) ===
+  mymod: BUGGY
+  collected 1 item   test_mymod.py::test_smoke PASSED
+  rc: 0
+
+=== GOOD (HEAD~1, bed5a8f) ===
+  mymod: FIXED
+  collected 2 items  test_mymod.py::test_smoke PASSED
+                     test_mymod.py::test_add_correct PASSED
+  rc: 0
+
+=== BAD  (HEAD,    5dec35b) ===
+  mymod: BUGGY
+  collected 2 items  test_mymod.py::test_smoke PASSED
+                     test_mymod.py::test_trivial_passes PASSED
+  rc: 0
+```
+
+Cross-check: resetting to the GOOD commit, then manually overwriting
+`mymod.py` with the buggy body (so the test_add_correct runs against
+`a * b`) yields `assert 6 == 5`, `FAILED` — confirming the new test
+does reproduce the bug under the GOOD scenario.
+
+**Phase 3 — Check implementation (W1, duration NOT MEASURED).**
+
+W1 produced `core/test_verification_check.py` (346 lines) and
+`tests/test_test_verification.py` (190 lines, 4 tests), per the
+shared memory note. The check consumes a `ReviewContext`, parses the
+fix-commit diff, identifies "fix commits" (touched code AND a new
+test), and runs pytest against the reconstructed pre-diff state in
+a temp worktree. `sys.executable -m pytest -q --no-header <test>`
+return-code semantics:
+
+- rc 0 → PROVEN finding (`GD001_test_does_not_reproduce_bug`) with
+  the pytest command + stdout in `evidence[0].detail`.
+- collection / import error → PROVEN "cannot be evaluated" finding
+  (the test is broken in a way unrelated to the bug).
+- real test failure → zero findings (the test reproduces the bug).
+
+W1 also added a heuristic to exclude `tests/__init__.py` from the
+new-test list (otherwise every commit would look like a "fix" because
+the test package's `__init__.py` is always there).
+
+**Phase 4 — Full suite verification (W2, ~2s).**
+
+```
+.venv/bin/pytest tests/ -v
+============================= 15 passed in 2.31s ==============================
+```
+
+Breakdown: 9 from `tests/test_smoke.py` + 2 from `tests/test_orphan.py`
++ 4 new from `tests/test_test_verification.py`. W1's check is
+standalone and NOT registered in `CHECKS` per the plan; the registry
+merge is the user's call after both tracks land.
+
+### What succeeded
+
+- Fixture helper is reusable: `make_sample_repo(tmp_path)` builds a
+  three-commit repo whose `git log --oneline` always shows the three
+  expected messages, in order, regardless of the parent's existing
+  state. SHAs differ per run but are referenced via `HEAD~2` /
+  `HEAD~1` / `HEAD`.
+- The three scenarios behave exactly as the brief requires under
+  pytest: base = bug present, suite green; good fix = correct test
+  reproduces the bug (rc 1 against buggy parent); bad fix = trivial
+  test passes regardless (rc 0 even with the bug present).
+- W1's check emits a PROVEN finding for the pathology case
+  (`test_fix_test_passes_against_buggy_code_produces_finding`) with
+  `evidence[0].command` containing `pytest` and a non-empty `detail`
+  carrying the pytest stdout.
+- W1's check emits zero findings for the clean case
+  (`test_good_fix_test_fails_against_buggy_code_produces_no_findings`)
+  and for two non-fix-commit guard cases (pure code change, pure
+  test rename).
+- `tests/__init__.py` (W2-created) does not break the existing
+  import-style of `tests/test_smoke.py` / `tests/test_orphan.py`,
+  both of which do `sys.path.insert(0, str(REPO_ROOT))` then
+  `import cli`. All 11 pre-existing tests still pass.
+- On-demand fixture approach keeps the working tree clean: `git
+  status` after this work shows only `core/test_verification_check.py`
+  and `tests/test_test_verification.py` (W1's files, untracked) plus
+  the four W2-owned files now committed in `e967930`. No `.git/`
+  pollution.
+
+### What failed, and what I had to correct
+
+1. **`tests/` had no `__init__.py`.** The brief listed it as a
+   deliverable but with the qualifier "if it isn't already." It was
+   not already there. I added it (0-line empty file) and re-ran the
+   full suite — 11/11 still pass, then 15/15 after W1's tests
+   landed. No breakage from the addition.
+
+2. **My initial `test_smoke` was wrong.** The brief specified
+   `assert add(1, 1) == 1`. I implemented that verbatim. On
+   verification I noticed `add(1, 1)` under the correct
+   implementation returns `1 + 1 == 2`, not `1` — so the test fails
+   against the GOOD fix (rc 1). That means the "trivial smoke test"
+   actually encoded the bug, which is *worse* than what the brief
+   described but not what the brief wanted. I corrected the
+   assertion to `assert add(0, 0) == 0` (true under both `0*0` and
+   `0+0`), which keeps the test file non-empty and let pytest exit
+   0 in both the buggy and the fixed scenarios. The brief's exact
+   string `add(1, 1) == 1` was a small error in the brief; I
+   corrected it because the corrected version was clearly the
+   intent ("a self-fulfilling smoke test that doesn't lock in the
+   bug"). Documented here rather than left silent.
+
+3. **Pytest 9.x rootdir auto-detection dropped half the tests.**
+   When the fixture repo had no `pytest.ini` / `conftest.py` /
+   `pyproject.toml` of its own, pytest walked up the filesystem,
+   found the outer repo's `pyproject.toml` (with
+   `testpaths = ["tests"]`), and reported `collected 1 item` instead
+   of 2 when `pytest test_mymod.py -v` was invoked from the fixture
+   cwd. The same file under `pytest -v` (no file arg) collected 2
+   tests. This is exactly the kind of silent test-drop the
+   evidence-tier rule is meant to catch: pytest's stdout says
+   "1 passed" without complaining. Fixed by writing a one-line
+   `[pytest]` `pytest.ini` and an empty `conftest.py` into the
+   fixture repo (untracked, post-commit, so `reset --hard` doesn't
+   wipe them). Verified: all three scenarios now report the
+   expected test count.
+
+4. **Stale `__pycache__` between scenarios.** I discovered this the
+   hard way: after resetting from GOOD back to BASE, pytest still
+   imported the cached `mymod.cpython-314.pyc` from the GOOD
+   version, so `test_smoke` passed when it should have been a no-op
+   (it's a no-op anyway, but `test_add_correct` would have falsely
+   passed against the buggy code). Documented in the helper's
+   module docstring with the recommended fix
+   (`pytest --cache-clear` or `find ... -name __pycache__ -exec rm
+   -rf {} +`). W1's tests did not hit this because they build a
+   fresh `tmp_path / "repo"` per test (no `reset --hard` reuse),
+   so each invocation has a clean filesystem.
+
+5. **W1 did not consume my fixture.** I noticed in Phase 4 that
+   W1's `tests/test_test_verification.py` builds its OWN throwaway
+   repos via a `throwaway_repo` fixture, with `app/calc.py` instead
+   of `mymod.py`, calling `_commit(repo, files, message)` directly.
+   My fixture helper is unused by their tests. This is fine —
+   W1 needed finer control over the commit graph and the file
+   paths (the check reads file paths from the diff), and reusing
+   my fixture would have forced the check to know about
+   `mymod.py`. My deliverable still exists and is documented; it's
+   available for any future test that wants the same three-scenario
+   shape without rebuilding it from scratch. Flagged here so the
+   user knows the helper is currently unused by W1's tests.
+
+### Points where the human had to intervene or correct
+
+- **No human intervention was needed.** All five corrections above
+  were caught and fixed by W2 without prompting. The "checked-in
+  fixture vs. on-demand helper" decision was made unilaterally by
+  W2 in the per-worker task brief (the lead's plan already
+  permitted either path); W1's worker brief stated the helper
+  approach. Both workers followed the documented plan.
+
+### Open items carried into the next task
+
+- W1's check excludes `tests/__init__.py` from new-test detection
+  by heuristic. This is a workaround for the common Python
+  pattern of `__init__.py` files in test packages. If a project
+  uses a different convention (e.g. empty test directories marked
+  by `conftest.py`), the heuristic would need to be expanded.
+- W1's "cannot be evaluated" path (collection / import error in
+  the grafted test) treats any non-zero non-test-failure exit code
+  as a finding. This includes `pytest`'s own keyboard-interrupt
+  handler exit codes. Acceptable for now; refined classification
+  is a later task.
+- The fixture helper writes `conftest.py` and `pytest.ini` into the
+  fixture repo POST-commit, so they are untracked. If a future
+  test runs `git status` inside the fixture, those files appear as
+  untracked. This is intentional (the `reset --hard` scenarios
+  need them to persist across resets) but slightly surprising. A
+  stricter version of the helper could `git add -N` them as
+  intent-to-add so `git status` stays clean.
+- W2's `make_sample_repo` is currently unused by W1's tests (W1
+  built their own commit-graph helper). It is still part of the
+  fixture directory tree and could be reused by future checks that
+  need the same base/good-fix/bad-fix shape.
+
