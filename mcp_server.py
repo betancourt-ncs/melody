@@ -36,6 +36,36 @@ TOOL_SCHEMA: dict[str, Any] = {
     "required": ["repo_path", "diff_ref"],
 }
 
+TOOL_NAME_ASSUMPTIONS = "check_assumptions"
+TOOL_DESCRIPTION_ASSUMPTIONS = (
+    "Detect assumption gaps and enforce structured reasoning before writing code. "
+    "Compares what the planned approach commits to against what the task "
+    "description actually specifies. Runs mid-task, before any code exists. "
+    "Produces findings in the THINK_BEFORE_CODING pillar."
+)
+TOOL_SCHEMA_ASSUMPTIONS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "task_description": {
+            "type": "string",
+            "description": (
+                "The task as given — an agent prompt, issue, or instruction. "
+                "What the caller was asked to do."
+            ),
+        },
+        "planned_approach": {
+            "type": "string",
+            "description": (
+                "The plan or approach the agent wrote. Any concrete commitment "
+                "(format, library, data structure, error behavior) not grounded "
+                "in the task is an assumption gap. If gaps exist, at least two "
+                "named approaches with stated tradeoffs are required."
+            ),
+        },
+    },
+    "required": ["task_description", "planned_approach"],
+}
+
 
 def review_diff_tool(repo_path: str, diff_ref: str) -> dict[str, Any]:
     """Review a diff and return findings with their evidence.
@@ -61,6 +91,40 @@ def review_diff_tool(repo_path: str, diff_ref: str) -> dict[str, Any]:
     return {"ok": True, **report.as_dict()}
 
 
+def check_assumptions_tool(
+    task_description: str, planned_approach: str
+) -> dict[str, Any]:
+    """Detect assumption gaps and enforce structured reasoning.
+
+    Args:
+        task_description: The task as given — agent prompt, issue, or instruction.
+        planned_approach: The plan or approach the agent wrote.
+
+    Returns:
+        A dict with findings in the THINK_BEFORE_CODING pillar. Never raises.
+    """
+    from core.think_before_coding import check_assumptions
+
+    findings = check_assumptions(
+        task_description=task_description,
+        planned_approach=planned_approach,
+    )
+    return {
+        "ok": True,
+        "findings": [
+            {
+                "rule_id": f.rule_id,
+                "pillar": f.pillar.value,
+                "message": f.message,
+                "tier": f.tier.value,
+                "evidence": [e.as_dict() for e in f.evidence],
+            }
+            for f in findings
+        ],
+        "exit_code": 1 if findings else 0,
+    }
+
+
 def build_server() -> Any:
     """Build the MCP server exposing melody's core functions as tools.
 
@@ -80,6 +144,10 @@ def build_server() -> Any:
 
     server = FastMCP("melody")
     server.tool(name=TOOL_NAME, description=TOOL_DESCRIPTION)(review_diff_tool)
+    server.tool(
+        name=TOOL_NAME_ASSUMPTIONS,
+        description=TOOL_DESCRIPTION_ASSUMPTIONS,
+    )(check_assumptions_tool)
     return server
 
 
