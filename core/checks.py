@@ -4,7 +4,7 @@ A check is a plain function: concrete input in, findings with evidence out. It
 receives a `ReviewContext` and returns zero or more `Finding`s. A check that
 cannot attach evidence to a claim must not make the claim.
 
-Layer: core. This module knows nothing about how mel is invoked.
+Layer: core. This module knows nothing about how melody is invoked.
 """
 from __future__ import annotations
 
@@ -44,9 +44,8 @@ class ReviewContext:
 Check = Callable[[ReviewContext], Sequence[Finding]]
 
 
-#: The registry the pipeline runs. Empty in Task 1 by design: this task ships
-#: the skeleton, so a review run produces zero findings.
-#:
-#: Each entry added here must serve exactly one pillar from PROJECT.md and must
-#: attach evidence in a tier the model accepts.
-CHECKS: tuple[Check, ...] = ()
+#: The registry the pipeline runs. Each entry serves exactly one pillar from
+#: PROJECT.md and attaches evidence in a tier the model accepts.
+from core.orphan_check import check_orphaned_symbols  # noqa: E402
+
+CHECKS: tuple[Check, ...] = (check_orphaned_symbols,)

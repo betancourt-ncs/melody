@@ -20,20 +20,20 @@ import cli  # noqa: E402
 from core.models import Evidence, EvidenceTier, Finding, Pillar  # noqa: E402
 
 
-def run_mel(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    """Run the real `mel` command as a subprocess. Skips if it is not installed."""
+def run_melody(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run the real `melody` command as a subprocess. Skips if it is not installed."""
     return subprocess.run(
-        [_mel_executable(), *args],
+        [_melody_executable(), *args],
         cwd=cwd,
         capture_output=True,
         text=True,
     )
 
 
-def _mel_executable() -> str:
-    candidate = Path(sys.executable).parent / "mel"
+def _melody_executable() -> str:
+    candidate = Path(sys.executable).parent / "melody"
     if not candidate.exists():
-        pytest.skip("the `mel` console script is not installed; run: pip install -e '.[dev]'")
+        pytest.skip("the `melody` console script is not installed; run: pip install -e '.[dev]'")
     return str(candidate)
 
 
@@ -59,21 +59,21 @@ def git_repo(tmp_path: Path) -> Path:
 
 
 def test_review_reports_zero_findings_without_crashing(git_repo: Path) -> None:
-    result = run_mel("review", "--diff", "HEAD~1", cwd=git_repo)
+    result = run_melody("review", "--diff", "HEAD~1", cwd=git_repo)
 
     assert result.returncode == 0, result.stderr
     assert "0 findings." in result.stdout
     assert "Nothing was found, which is not the same as nothing being wrong." in result.stdout
 
 
-def test_report_states_that_no_checks_ran(git_repo: Path) -> None:
-    result = run_mel("review", "--diff", "HEAD~1", cwd=git_repo)
+def test_report_confirms_checks_ran(git_repo: Path) -> None:
+    result = run_melody("review", "--diff", "HEAD~1", cwd=git_repo)
 
-    assert "No checks are registered in this build" in result.stdout
+    assert "No checks are registered in this build" not in result.stdout
 
 
 def test_unresolvable_ref_is_a_usage_error(git_repo: Path) -> None:
-    result = run_mel("review", "--diff", "not-a-real-ref", cwd=git_repo)
+    result = run_melody("review", "--diff", "not-a-real-ref", cwd=git_repo)
 
     assert result.returncode == 2
     assert "cannot resolve diff ref" in result.stderr
@@ -81,7 +81,7 @@ def test_unresolvable_ref_is_a_usage_error(git_repo: Path) -> None:
 
 
 def test_non_git_directory_is_a_usage_error(tmp_path: Path) -> None:
-    result = run_mel("review", "--diff", "HEAD~1", cwd=tmp_path)
+    result = run_melody("review", "--diff", "HEAD~1", cwd=tmp_path)
 
     assert result.returncode == 2
     assert "not a git repository" in result.stderr
@@ -89,7 +89,7 @@ def test_non_git_directory_is_a_usage_error(tmp_path: Path) -> None:
 
 
 def test_json_format_reports_the_same_empty_result(git_repo: Path) -> None:
-    result = run_mel("review", "--diff", "HEAD~1", "--format", "json", cwd=git_repo)
+    result = run_melody("review", "--diff", "HEAD~1", "--format", "json", cwd=git_repo)
 
     assert result.returncode == 0, result.stderr
     payload = __import__("json").loads(result.stdout)

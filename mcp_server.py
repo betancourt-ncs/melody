@@ -1,12 +1,12 @@
-"""MCP adapter for mel.
+"""MCP adapter for melody.
 
 Thin by design: each tool validates its arguments and calls the same core
 functions the CLI calls. It holds no check logic and no rendering -- `core`
 returns the findings, this module only wraps them in an MCP schema.
 
-The MCP SDK is an optional dependency (`pip install mel[mcp]`). It is imported
-lazily inside the entry point so that this module stays importable, and the CLI
-keeps working, when the SDK is not installed.
+The MCP SDK is an optional dependency (`pip install melody[mcp]`). It is
+imported lazily inside the entry point so that this module stays importable,
+and the CLI keeps working, when the SDK is not installed.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ TOOL_NAME = "review_diff"
 TOOL_DESCRIPTION = (
     "Review a diff of AI-generated code in a local git repository and return "
     "findings. Every finding carries evidence tagged proven, inferred or "
-    "advisory; mel does not report opinions. Findings are about the diff, not "
+    "advisory; melody does not report opinions. Findings are about the diff, not "
     "a judgment of the whole repo."
 )
 
@@ -62,7 +62,7 @@ def review_diff_tool(repo_path: str, diff_ref: str) -> dict[str, Any]:
 
 
 def build_server() -> Any:
-    """Build the MCP server exposing mel's core functions as tools.
+    """Build the MCP server exposing melody's core functions as tools.
 
     Returns:
         A configured MCP server object.
@@ -75,10 +75,10 @@ def build_server() -> Any:
     except ImportError as exc:
         raise RuntimeError(
             "the MCP server needs the optional 'mcp' dependency; "
-            "install it with: pip install 'mel[mcp]'"
+            "install it with: pip install 'melody[mcp]'"
         ) from exc
 
-    server = FastMCP("mel")
+    server = FastMCP("melody")
     server.tool(name=TOOL_NAME, description=TOOL_DESCRIPTION)(review_diff_tool)
     return server
 
@@ -94,7 +94,7 @@ def main() -> int:
     try:
         build_server()
     except RuntimeError as exc:
-        print(f"mel-mcp: {exc}", file=sys.stderr)
+        print(f"melody-mcp: {exc}", file=sys.stderr)
         return 2
     # FastMCP.run() blocks on stdio and does not return a code.
     return 0

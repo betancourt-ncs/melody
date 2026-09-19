@@ -1,4 +1,4 @@
-# mel — a code reviewer/auditor for AI-generated code
+# melody — a code reviewer/auditor for AI-generated code
 
 This document governs every session on this project. If a future task conflicts with
 what is written here, this document wins. Changes to it require an explicit human

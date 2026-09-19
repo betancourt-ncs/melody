@@ -1,4 +1,4 @@
-"""CLI adapter for mel.
+"""CLI adapter for melody.
 
 Thin by design: this module parses arguments, calls `core.pipeline`, and
 renders the report. It holds no check logic and no analysis. Anything that
@@ -28,13 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser.
 
     Returns:
-        A parser for the `mel` command.
+        A parser for the `melody` command.
     """
     parser = argparse.ArgumentParser(
-        prog="mel",
+        prog="melody",
         description=(
             "Review a diff of AI-generated code. Every finding carries evidence; "
-            "mel does not report opinions."
+            "melody does not report opinions."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -76,7 +76,7 @@ def render_text(report: Report) -> str:
     """
     lines: list[str] = []
     ref = report.resolved_ref[:10] if report.resolved_ref else "?"
-    lines.append(f"mel review --diff {report.diff_ref}  ({ref})")
+    lines.append(f"melody review --diff {report.diff_ref}  ({ref})")
     lines.append("")
 
     for finding in report.findings:
@@ -106,7 +106,7 @@ def render_text(report: Report) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for the `mel` command.
+    """Entry point for the `melody` command.
 
     Args:
         argv: Argument list, defaulting to sys.argv[1:].
@@ -119,11 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = review_diff(repo_path=Path(args.repo).resolve(), diff_ref=args.diff)
     except ReviewError as exc:
-        print(f"mel: {exc}", file=sys.stderr)
+        print(f"melody: {exc}", file=sys.stderr)
         return EXIT_USAGE
     except NotImplementedError as exc:
         # Skeleton stage: a code path exists but carries no implementation yet.
-        print(f"mel: not implemented yet: {exc}", file=sys.stderr)
+        print(f"melody: not implemented yet: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
     if args.format == "json":

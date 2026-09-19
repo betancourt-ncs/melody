@@ -3,7 +3,7 @@
 This is the one place both adapters call into. It holds no check logic and no
 rendering; it wires the two together.
 
-Layer: core. This module knows nothing about how mel is invoked.
+Layer: core. This module knows nothing about how melody is invoked.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from core.models import Finding, Report, ReviewError
 
 
 def validate_repo(repo_path: Path) -> None:
-    """Confirm `repo_path` is a git repo mel can review.
+    """Confirm `repo_path` is a git repo melody can review.
 
     Args:
         repo_path: Directory to review.
@@ -60,6 +60,28 @@ def resolve_diff_ref(repo_path: Path, diff_ref: str) -> str:
     return sha
 
 
+def _run_git(args: list[str], repo_path: Path) -> str:
+    """Run a git command in *repo_path* and return stdout.
+
+    Raises:
+        ReviewError: If git is unavailable or the command fails.
+    """
+    try:
+        result = subprocess.run(
+            args,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ReviewError("git is not installed or not on PATH") from exc
+    if result.returncode != 0:
+        raise ReviewError(
+            f"git {' '.join(args[1:])} failed in {repo_path}: {result.stderr.strip()}"
+        )
+    return result.stdout
+
+
 def build_context(repo_path: Path, diff_ref: str) -> ReviewContext:
     """Collect everything the checks need for one run.
 
@@ -72,11 +94,26 @@ def build_context(repo_path: Path, diff_ref: str) -> ReviewContext:
 
     Raises:
         ReviewError: If the diff cannot be read or parsed.
-
-    Not implemented in this task. Task 1 ships the skeleton only, and the
-    pipeline does not reach this function while `CHECKS` is empty.
     """
-    raise NotImplementedError("build_context is not implemented yet")
+    from core.diff import parse_unified_diff
+
+    diff_text = _run_git(
+        ["git", "diff", "--no-color", diff_ref],
+        repo_path,
+    )
+    parsed = parse_unified_diff(diff_text)
+
+    ls_files = _run_git(["git", "ls-files"], repo_path)
+    repo_root_files = tuple(
+        repo_path / p for p in ls_files.splitlines() if p.strip()
+    )
+
+    return ReviewContext(
+        repo_path=repo_path,
+        diff_ref=diff_ref,
+        diff=parsed,
+        repo_root_files=repo_root_files,
+    )
 
 
 def run_checks(context: ReviewContext, checks: Sequence[Check]) -> list[Finding]:
@@ -88,7 +125,7 @@ def run_checks(context: ReviewContext, checks: Sequence[Check]) -> list[Finding]
 
     Returns:
         Findings in check order. A check that raises is not swallowed: a broken
-        check is a bug in mel, not a clean result for the user.
+        check is a bug in melody, not a clean result for the user.
     """
     findings: list[Finding] = []
     for check in checks:

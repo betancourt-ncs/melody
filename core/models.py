@@ -4,7 +4,7 @@ This module is the enforcement point for the project's evidence rule: a
 `Finding` cannot be constructed without evidence, and `PROVEN` evidence cannot
 be constructed without the command that produced it. See PROJECT.md.
 
-Layer: core. This module knows nothing about how mel is invoked.
+Layer: core. This module knows nothing about how melody is invoked.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 
 
 class ReviewError(Exception):
-    """Raised when mel cannot review at all (bad repo, bad ref, unreadable diff).
+    """Raised when melody cannot review at all (bad repo, bad ref, unreadable diff).
 
     This is distinct from a finding: it means the review did not happen, so
     there is nothing to report and no evidence to attach.
