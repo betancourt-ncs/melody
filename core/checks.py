@@ -48,4 +48,10 @@ Check = Callable[[ReviewContext], Sequence[Finding]]
 #: PROJECT.md and attaches evidence in a tier the model accepts.
 from core.orphan_check import check_orphaned_symbols  # noqa: E402
 
-CHECKS: tuple[Check, ...] = (check_orphaned_symbols,)
+
+from core.test_verification_check import check_test_verification  # noqa: E402
+
+CHECKS: tuple[Check, ...] = (
+    check_orphaned_symbols,
+    check_test_verification,
+)
