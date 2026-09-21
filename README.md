@@ -4,7 +4,7 @@ A custom MCP server and CLI tool to improve AI-generated code and behavior, base
 
 Melody is a code reviewer for code produced by today's most capable LLMs, backed by findings that use real evidence and commands that actually ran against the codebase.
 
-## The Problems:
+## The Problems
 
 LLM coding agents don't fail the way junior developers fail. They make silent assumptions and run with them, overcomplicate simple problems, touch code they weren't asked to touch, and write tests that pass without verifying anything.
 
