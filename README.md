@@ -1,14 +1,41 @@
 # melody
 
-A code reviewer for AI-generated code. Every finding is backed by a command that actually ran.
+A custom MCP server and CLI tool to improve AI-generated code and behavior, based on real evidence. Derived from [Andrej Karpathy's observations](https://x.com/karpathy/status/2015883857489522876) on LLM coding pitfalls.
 
-LLM coding agents don't fail the way junior developers fail. They make silent assumptions and run with them, overcomplicate simple problems, touch code they weren't asked to touch, and write tests that pass without verifying anything. Andrej Karpathy [wrote about this](https://x.com/karpathy/status/2015883857489522876), and the community response has largely been prompt engineering — a `CLAUDE.md` file asking the model to behave better.
+Melody is essentially a code reviewer for code produced by today's most capable LLMs, backed by findings that use real evidence and commands that actually ran against the codebase.
 
-melody takes the other approach. Instead of instructing a model to be careful, it inspects the diff and proves what went wrong by executing something: a `git grep`, an AST walk, a test run. Findings are evidence, not opinions.
+## The Problems:
+
+LLM coding agents don't fail the way junior developers fail. They make silent assumptions and run with them, overcomplicate simple problems, touch code they weren't asked to touch, and write tests that pass without verifying anything.
+
+Up until now, the community's response to this has primarily been prompt engineering (e.g. a `CLAUDE.md` file asking the model to behave better). The issue is that this relies on the LLM's own judgement to interpret and review its own work - introducing bias, inconsistency across multi-file projects, and unverifiable tests.
+
+From Andrej's post:
+
+> "The models make wrong assumptions on your behalf and just run along with them without checking. They don't manage their confusion, don't seek clarifications, don't surface inconsistencies, don't present tradeoffs, don't push back when they should."
+
+> "They really like to overcomplicate code and APIs, bloat abstractions, don't clean up dead code... implement a bloated construction over 1000 lines when 100 would do."
+
+> "They still sometimes change/remove comments and code they don't sufficiently understand as side effects, even if orthogonal to the task."
+
+## The Solution
+
+Melody takes another approach. Instead of instructing a model to be careful, it inspects the code diff and proves what went wrong by executing a command: a `git grep`, an AST walk, a test run. Findings are evidence, not opinions.
+
+Inspired by Andrej's post, I categorized these LLM pitfalls into four main pillars to directly address these issues:
+
+| Principle                 | Addresses                                                 |
+| ------------------------- | --------------------------------------------------------- |
+| **Think Before Coding**   | Wrong assumptions, hidden confusion, missing tradeoffs    |
+| **Simplicity First**      | Overcomplication, bloated abstractions                    |
+| **Surgical Changes**      | Unrelated edits, touching code you shouldn't              |
+| **Goal-Driven Execution** | Leverage through tests-first, verifiable success criteria |
+
+Every pillar is implemented through specific checks, commands, evidence, and success criteria. Three run against a diff via the CLI; one runs inside the agent loop via MCP.
 
 ## The evidence rule
 
-Every finding carries an evidence tier, and the tier is enforced in the type system — not by convention:
+Every finding carries an evidence tier, and the tier is enforced in the type system, not by convention:
 
 | Tier       | Meaning                                                                                         |
 | ---------- | ----------------------------------------------------------------------------------------------- |
@@ -16,15 +43,33 @@ Every finding carries an evidence tier, and the tier is enforced in the type sys
 | `inferred` | Derived from static analysis of the diff or AST, not from a command's output.                   |
 | `advisory` | Human judgment, clearly labeled as such.                                                        |
 
-`Evidence` refuses construction if a `proven` finding has no command attached. During development this constraint caught two real bugs in melody's own checks before they shipped.
+`Evidence` refuses construction if a `proven` finding has no command attached. During development, this constraint actually caught two real bugs in Melody's own checks before they shipped!
 
-## Checks
+## The Four Principles, in detail:
 
-melody implements four of Karpathy's pillars. Three run against a diff via the CLI; one runs inside the agent loop via MCP.
+### Think Before Coding — `TC001`, `TC002` (MCP only)
+
+This pillar can't be checked "after the fact" — a finished diff doesn't contain the model's assumptions (that it probably never surfaced anyway). So it runs _before_ code exists, called by the agent mid-task, during the loop:
+
+- **`TC001_assumption_gap`** — compares what the model's plan commits to (a format, a library, a data structure, an error behavior) against what the developer's task actually specified. Anything ungrounded is a silent assumption. **`inferred`.**
+
+- **`TC002_missing_reasoning_structure`** — when real gaps exist, it requires at least two named approaches with stated tradeoffs on record. **`inferred`.**
+
+TC002 confirms that the reasoning structure was filled in, not that the reasoning inside it was good. That limitation is intentional and stated rather than hidden.
+
+### Simplicity First — `SF001`, `SF002`, `SF003`
+
+"Would a senior engineer or an LLM call this code overcomplicated?" is a judgment call. A cyclomatic complexity score is a number a tool computed. Melody only ships the second kind.
+
+- **`SF001_single_use_abstraction`** — a function or class with exactly one call site in the whole repo. Evidence: the `git grep` call-site count. **`proven`.**
+
+- **`SF002_excess_complexity`** — cyclomatic complexity computed by AST walk (counting `if`/`for`/`while`/`except`/boolean-operator nodes) for functions touched by the diff, flagged above a threshold of 10. Evidence: the score and a branch-by-branch tally. **`inferred`.**
+
+- **`SF003_extraneous_file`** — a new `config/`, `utils/`, `types/`, or `constants/` catch-all file, confirmed as newly added via `git diff --diff-filter=A`. **`proven`.**
 
 ### Surgical Changes — `SC001_orphaned_symbol`
 
-Detects symbols removed or renamed by the diff that left the repo broken:
+Detects two ways that symbols removed or renamed by the diff can leave the repo broken:
 
 - A removed symbol still referenced elsewhere (a broken reference)
 - The diff removed the last call site of a symbol that still exists (an orphaned definition)
@@ -33,24 +78,9 @@ Candidates are found by scanning removed diff lines, then confirmed by parsing t
 
 ### Goal-Driven Execution — `GD001_test_does_not_reproduce_bug`
 
-Detects a "fix" whose accompanying test doesn't actually fail against the pre-fix code — meaning the test doesn't reproduce the bug it claims to catch. Reconstructs the base commit's state, grafts in the new test, and runs it. If it passes against the buggy code, that's the finding. **Evidence: `proven`** — the pytest command and its real output.
+Detects a "fix" whose accompanying test doesn't actually fail against the pre-fix code — meaning the test doesn't reproduce the bug it claims to catch. This check reconstructs the base commit's state, grafts in the new test, and runs it. If it passes against the buggy code, that's the finding. **Evidence: `proven`** — the pytest command and its real output.
 
-### Simplicity First — `SF001`, `SF002`, `SF003`
-
-- **`SF001_single_use_abstraction`** — a function or class with exactly one call site in the whole repo. Evidence: the `git grep` call-site count. **`proven`.**
-- **`SF002_excess_complexity`** — cyclomatic complexity computed by AST walk (counting `if`/`for`/`while`/`except`/boolean-operator nodes) for functions touched by the diff, flagged above a threshold of 10. Evidence: the score and a branch-by-branch tally. **`inferred`.**
-- **`SF003_extraneous_file`** — a new `config/`, `utils/`, `types/`, or `constants/` catch-all file, confirmed as newly added via `git diff --diff-filter=A`. **`proven`.**
-
-"Would a senior engineer call this overcomplicated?" is a judgment call. A cyclomatic complexity score is a number a tool computed. melody only ships the second kind.
-
-### Think Before Coding — `TC001`, `TC002` (MCP only)
-
-This pillar can't be checked after the fact — a finished diff doesn't contain the assumption the model never surfaced. So it runs _before_ code exists, called by the agent mid-task:
-
-- **`TC001_assumption_gap`** — compares what the plan commits to (a format, a library, a data structure, an error behavior) against what the task actually specified. Anything ungrounded is a silent assumption. **`inferred`.**
-- **`TC002_missing_reasoning_structure`** — when real gaps exist, requires at least two named approaches with stated tradeoffs on record. **`inferred`.**
-
-TC002 proves the reasoning structure was filled in, not that the reasoning inside it was good. That limitation is intentional and stated rather than hidden.
+The idea is to transform imperative instructions into declarative goals with verification loops and detailed checks.
 
 ## Installation
 
@@ -64,7 +94,7 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Verify:
+Verify with:
 
 ```bash
 melody --help
@@ -99,10 +129,16 @@ A zero-finding report is never presented as a clean bill of health — the repor
 
 ### MCP server
 
-melody also runs as an MCP server, so an agent can call it mid-task rather than only reviewing finished work. It exposes two tools:
+Melody also runs as an MCP server, so an agent can call it mid-task rather than only reviewing finished work. It exposes two tools:
 
 - `review_diff(repo_path, diff_ref)` — the same checks as the CLI
 - `check_assumptions(task_description, planned_approach)` — the Think Before Coding pillar
+
+First install the MCP extra:
+
+```bash
+pip install -e '.[mcp]'
+```
 
 Register it as a custom MCP server with:
 
@@ -111,15 +147,9 @@ Command:   /absolute/path/to/melody/.venv/bin/python
 Arguments: /absolute/path/to/melody/mcp_server.py
 ```
 
-Requires the MCP extra:
+Then, from inside an agent session, tell the LLM something like:
 
-```bash
-pip install -e '.[mcp]'
-```
-
-Then, from inside an agent session:
-
-> Before you commit to that approach, use melody to check your assumptions.
+> "Before you commit to that approach, use Melody to check your assumptions."
 
 ## Architecture
 
@@ -155,8 +185,19 @@ Declared operating boundaries, stated rather than discovered:
 - **`SF001`/`SF002`/`SF003` were verified against constructed fixture commits**, not organically occurring ones.
 - **Not checked:** whether one proposed approach is simpler than another, whether an abstraction is "just a wrapper," and other rules that require judging intent rather than counting something. See `PROJECT.md` for the full future-checks list and the reasoning behind each exclusion.
 
+## Is it working?
+
+Each pillar is doing its job if you can verify that:
+
+- **Melody flags an assumption before code ships, not after** — a silent format or library choice gets timely caught, not neglected after mistakes have been made
+- **A complexity rating backs up "this is complicated," instead of a guess** — the score and the branches that produced it are both shown
+- **Only what the diff actually deleted gets flagged** — untouched code never shows up in a finding
+- **A "fix" only passes review if its test actually fails on the old, broken code** — not just on the new one
+
 ## Built for the Miami AI Hackathon
 
 Built with [Mel](https://openmel.dev) on September 18–19, 2026, for the Agentic Engineering track.
 
-`evidence/runlog.md` is the honest build record — every task, every bug, every point where Mel needed correction. Two entries worth reading: the `GD001` `diff_ref` convention bug, where the check's own unit tests passed green while it was silently broken through the real CLI path (the exact failure mode `GD001` exists to catch), and the `TC002` evidence-tier conflict, where the type system's `proven`-requires-a-command rule forced a design decision mid-build.
+- Update: This project received an Honorable Mention award 😎 ⭐️
+
+Check out `evidence/runlog.md` for my honest build record — every task, every bug, every point where Mel needed correction. If you don't want to read every single entry, here are two entries I think are worth reading: the `GD001` `diff_ref` convention bug, where the check's own unit tests passed green while it was silently broken through the real CLI path (the exact failure mode `GD001` in my tool exists to catch). Also, the `TC002` evidence-tier conflict entry, where the type system's `proven` rule forced a design decision mid-build, which correctly awaited my judgment before choosing which approach to take.
