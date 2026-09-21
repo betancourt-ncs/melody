@@ -20,7 +20,7 @@ From Andrej's post:
 
 ## The Solution
 
-Melody takes another approach. Instead of instructing a model to be careful, it inspects the code diff and proves what went wrong by executing a command: a `git grep`, an AST walk, a test run. Findings are evidence, not opinions.
+Melody takes another approach. Instead of instructing a model to be careful, it inspects the code diff and proves what went wrong by executing a command: a `git grep`, an AST walk, a test run, etc. Findings are evidence, not opinions.
 
 Inspired by Andrej's post, I categorized these LLM pitfalls into four main pillars to directly address these issues:
 
