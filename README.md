@@ -45,38 +45,38 @@ Every finding carries an evidence tier, and the tier is enforced in the type sys
 
 `Evidence` refuses construction if a `proven` finding has no command attached. During development, this constraint actually caught two real bugs in Melody's own checks before they shipped!
 
-## The Four Principles, in detail:
+## The Four Principles, in detail
 
-### Think Before Coding — `TC001`, `TC002` (MCP only)
+### I) Think Before Coding — `TC001`, `TC002` (MCP only)
 
 This pillar can't be checked "after the fact" — a finished diff doesn't contain the model's assumptions (that it probably never surfaced anyway). So it runs _before_ code exists, called by the agent mid-task, during the loop:
 
-- **`TC001_assumption_gap`** — compares what the model's plan commits to (a format, a library, a data structure, an error behavior) against what the developer's task actually specified. Anything ungrounded is a silent assumption. **`inferred`.**
+- **`TC001_assumption_gap`** — compares what the model's plan commits to (a format, a library, a data structure, an error behavior) against what the developer's task actually specified. Anything ungrounded is a silent assumption. (**`inferred`**)
 
-- **`TC002_missing_reasoning_structure`** — when real gaps exist, it requires at least two named approaches with stated tradeoffs on record. **`inferred`.**
+- **`TC002_missing_reasoning_structure`** — when real gaps exist, it requires at least two named approaches with stated tradeoffs on record. (**`inferred`**)
 
 TC002 confirms that the reasoning structure was filled in, not that the reasoning inside it was good. That limitation is intentional and stated rather than hidden.
 
-### Simplicity First — `SF001`, `SF002`, `SF003`
+### II) Simplicity First — `SF001`, `SF002`, `SF003`
 
-"Would a senior engineer or an LLM call this code overcomplicated?" is a judgment call. A cyclomatic complexity score is a number a tool computed. Melody only ships the second kind.
+"Would a senior engineer or an LLM call this code overcomplicated?" is a judgment call. A cyclomatic complexity score is a number that a tool computed. Melody only ships the second kind.
 
-- **`SF001_single_use_abstraction`** — a function or class with exactly one call site in the whole repo. Evidence: the `git grep` call-site count. **`proven`.**
+- **`SF001_single_use_abstraction`** — a function or class with exactly one call site in the whole repo. Evidence: the `git grep` call-site count. (**`proven`**)
 
-- **`SF002_excess_complexity`** — cyclomatic complexity computed by AST walk (counting `if`/`for`/`while`/`except`/boolean-operator nodes) for functions touched by the diff, flagged above a threshold of 10. Evidence: the score and a branch-by-branch tally. **`inferred`.**
+- **`SF002_excess_complexity`** — cyclomatic complexity computed by AST walk (counting `if`/`for`/`while`/`except`/boolean-operator nodes) for functions touched by the diff, flagged above a threshold of 10. Evidence: the score and a branch-by-branch tally. (**`inferred`**)
 
-- **`SF003_extraneous_file`** — a new `config/`, `utils/`, `types/`, or `constants/` catch-all file, confirmed as newly added via `git diff --diff-filter=A`. **`proven`.**
+- **`SF003_extraneous_file`** — a new `config/`, `utils/`, `types/`, or `constants/` catch-all file, confirmed as newly added via `git diff --diff-filter=A`. (**`proven`**)
 
-### Surgical Changes — `SC001_orphaned_symbol`
+### III) Surgical Changes — `SC001_orphaned_symbol`
 
 Detects two ways that symbols removed or renamed by the diff can leave the repo broken:
 
 - A removed symbol still referenced elsewhere (a broken reference)
 - The diff removed the last call site of a symbol that still exists (an orphaned definition)
 
-Candidates are found by scanning removed diff lines, then confirmed by parsing the pre-diff file's AST — so a match inside a comment or string can't produce a false positive. References are searched with `git grep`, which only scans tracked files. **Evidence: `proven`.**
+Candidates are found by scanning removed diff lines, then confirmed by parsing the pre-diff file's AST — so a match inside a comment or string can't produce a false positive. References are searched with `git grep`, which only scans tracked files. **Evidence: (`proven`**)
 
-### Goal-Driven Execution — `GD001_test_does_not_reproduce_bug`
+### IV) Goal-Driven Execution — `GD001_test_does_not_reproduce_bug`
 
 Detects a "fix" whose accompanying test doesn't actually fail against the pre-fix code — meaning the test doesn't reproduce the bug it claims to catch. This check reconstructs the base commit's state, grafts in the new test, and runs it. If it passes against the buggy code, that's the finding. **Evidence: `proven`** — the pytest command and its real output.
 
@@ -94,11 +94,11 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Verify with:
+Verify by running:
 
 ```bash
 melody --help
-pytest -q          # 21 passed
+pytest -q          # Output: 21 passed
 ```
 
 ## Usage
@@ -126,6 +126,7 @@ melody review --diff <commit-sha>
 Exit code is `1` when findings are present, `0` when clean.
 
 A zero-finding report is never presented as a clean bill of health — the report states what it did and did not check.
+
 
 ### MCP server
 
@@ -193,6 +194,7 @@ Each pillar is doing its job if you can verify that:
 - **A complexity rating backs up "this is complicated," instead of a guess** — the score and the branches that produced it are both shown
 - **Only what the diff actually deleted gets flagged** — untouched code never shows up in a finding
 - **A "fix" only passes review if its test actually fails on the old, broken code** — not just on the new one
+
 
 ## Built for the Miami AI Hackathon
 
