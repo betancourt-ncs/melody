@@ -1,6 +1,6 @@
 # melody
 
-A custom MCP server and CLI tool to improve AI-generated code and behavior, based on real evidence. Derived from [Andrej Karpathy's observations](https://x.com/karpathy/status/2015883857489522876) on LLM coding pitfalls.
+A custom MCP server & CLI tool to improve AI-generated code and behavior, based on real evidence. Derived from [Andrej Karpathy's observations](https://x.com/karpathy/status/2015883857489522876) on LLM coding pitfalls.
 
 Melody is a code reviewer for code produced by today's most capable LLMs, backed by findings that use real evidence and commands that actually ran against the codebase.
 
